@@ -119,7 +119,10 @@ export function Game() {
 
   // Network Sync Setup
   useEffect(() => {
-    if (!userId || !gameId) { navigate('/'); return; }
+    if (!userId || !gameId) { 
+        navigate(`/?join=${gameId || ''}`); 
+        return; 
+    }
 
     const initGame = async () => {
       const gRef = doc(db, 'games', gameId);
@@ -206,8 +209,13 @@ export function Game() {
     const phys = physicsRef.current;
 
     const resize = () => {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        if (!canvasRef.current) return;
+        const canvas = canvasRef.current;
+        const aspect = window.innerWidth / window.innerHeight;
+        canvas.height = 600;
+        canvas.width = 600 * aspect;
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
     }
     window.addEventListener('resize', resize);
     resize();
@@ -595,12 +603,17 @@ export function Game() {
         )}
 
         {/* Mobile Controls */}
-        {gameState === 'playing' && !localDead && (
-            <div className="absolute inset-x-0 bottom-8 z-20 flex justify-center px-4 md:hidden select-none pointer-events-none">
+        {gameState === 'playing' && localStarted && !localDead && (
+            <div className="absolute inset-0 z-20 md:hidden pointer-events-none touch-none">
+                {/* Full screen tap to jump excluding top area where shop buttons are */}
                 <button 
                     onPointerDown={(e)=>{e.preventDefault(); hDown('up')}} onPointerUp={(e)=>{e.preventDefault(); hUp('up')}} onPointerLeave={() => hUp('up')}
-                    className="w-full h-32 bg-white/70 active:bg-white/90 border-4 border-black shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-[0_0_0_0] flex items-center justify-center text-black pointer-events-auto"
-                ><span className="text-4xl font-bold uppercase tracking-widest text-shadow-sm flex items-center gap-2"><ArrowUp size={40} className="fill-black"/> JUMP</span></button>
+                    className="absolute inset-x-0 bottom-0 top-32 w-full outline-none pointer-events-auto"
+                ></button>
+                {/* Visual hint for jump */}
+                <div className="absolute bottom-6 right-6 pointer-events-none opacity-50 bg-white border-4 border-black p-4 shadow-[4px_4px_0_0_#000] rotate-12">
+                    <span className="text-2xl font-bold uppercase tracking-widest flex items-center gap-2 text-black"><ArrowUp size={32} className="fill-black"/> JUMP</span>
+                </div>
             </div>
         )}
 

@@ -50,7 +50,8 @@ export function Lobby() {
     setError('');
     
     try {
-      const gameRef = doc(db, 'games', joinCode.toUpperCase());
+      const cleanedCode = joinCode.toUpperCase().trim();
+      const gameRef = doc(db, 'games', cleanedCode);
       const gameSnap = await getDoc(gameRef);
       
       if (!gameSnap.exists()) {
@@ -71,7 +72,7 @@ export function Lobby() {
           return;
       }
       
-      navigate(`/game/${joinCode.toUpperCase()}`);
+      navigate(`/game/${cleanedCode}`);
     } catch (err) {
       console.error(err);
       setError('Failed to join room.');
@@ -94,6 +95,7 @@ export function Lobby() {
         <h2 className="text-3xl font-bold text-center text-black mb-4 uppercase">Play Alone</h2>
         <p className="text-slate-600 text-center mb-8 text-xl leading-snug">START AN ENDLESS RUN ON YOUR OWN.</p>
         <button
+            type="button"
             onClick={createGame}
             disabled={loading}
             className="w-full bg-amber-400 hover:bg-amber-300 text-black font-bold text-2xl py-4 pixel-box uppercase disabled:opacity-50"
@@ -139,6 +141,7 @@ export function Lobby() {
 
         <div className="mt-8 pt-8 border-t-4 border-dashed border-slate-300">
              <button
+                type="button"
                 onClick={createGame}
                 disabled={loading}
                 className="w-full bg-sky-300 hover:bg-sky-200 text-black font-bold text-2xl py-4 pixel-box uppercase disabled:opacity-50"

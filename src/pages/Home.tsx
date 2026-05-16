@@ -50,6 +50,9 @@ export function Home() {
   const navigate = useNavigate();
   const { setUserId, setUsername, setCharacter, userId } = useGameStore();
 
+  const searchParams = new URLSearchParams(window.location.search);
+  const joinParam = searchParams.get('join');
+
   useEffect(() => {
     const uid = generateLocalUserId();
     setUserId(uid);
@@ -95,7 +98,11 @@ export function Home() {
       setUsername(localUsername);
       setCharacter(selectedChar);
       
-      navigate('/lobby');
+      if (joinParam && joinParam.length === 4) {
+          navigate(`/game/${joinParam}`);
+      } else {
+          navigate('/lobby');
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to setup profile');
