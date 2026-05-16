@@ -1,0 +1,82 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Shared Helper Functions
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // Validation Helpers
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'username', 'createdAt']) && 
+             data.keys().size() == 3 &&
+             data.uid is string && data.uid.size() <= 128 &&
+             data.username is string && data.username.size() >= 1 && data.username.size() <= 32 &&
+             data.createdAt is number;
+    }
+
+    function isValidGameSession(data) {
+      return data.keys().hasAll(['hostId', 'status', 'seed', 'createdAt']) &&
+             data.keys().size() == 4 &&
+             data.hostId is string && data.hostId.size() <= 128 &&
+             data.status is string && data.status in ["waiting", "playing", "finished"] &&
+             data.seed is number &&
+             data.createdAt is number;
+    }
+
+    function isValidPlayerStateCreate(data) {
+      return data.keys().hasAll(['userId', 'username', 'character', 'x', 'y', 'hp', 'coins', 'isDead', 'updatedAt']) &&
+             data.keys().size() == 9 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.username is string && data.username.size() <= 32 &&
+             data.character is string && data.character in ["Кеша", "Луша"] &&
+             data.x is number && data.y is number &&
+             data.hp is number && data.coins is number &&
+             data.isDead is bool &&
+             data.updatedAt is number;
+    }
+
+    // --- Users ---
+    match /users/{userId} {
+      allow read: if true; 
+      allow create: if isValidId(userId) && isValidUser(incoming()) && incoming().uid == userId;
+      allow update: if isValidId(userId) && isValidUser(incoming()) &&
+                    incoming().uid == existing().uid && 
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['username']);
+    }
+
+    // --- Games ---
+    match /games/{gameId} {
+      allow read: if true;
+      allow create: if isValidId(gameId) && isValidGameSession(incoming());
+      allow update: if isValidId(gameId) && isValidGameSession(incoming()) &&
+                    // Only host can update the game state (start or finish it)
+                    incoming().hostId == existing().hostId &&
+                    incoming().seed == existing().seed &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+    }
+
+    // --- Game Players ---
+    match /games/{gameId}/players/{playerId} {
+      allow read: if true; 
+      allow create: if isValidId(gameId) && isValidId(playerId) &&
+                    isValidPlayerStateCreate(incoming()) &&
+                    // Check if game exists and is waiting
+                    get(/databases/$(database)/documents/games/$(gameId)).data.status == 'waiting';
+      
+      allow update: if isValidId(gameId) && isValidId(playerId) &&
+                    // Allow broad updates for gameplay, but only by the player
+                    incoming().userId == existing().userId &&
+                    incoming().username == existing().username &&
+                    incoming().character == existing().character &&
+                    (incoming().diff(existing()).affectedKeys().hasOnly(['x', 'y', 'hp', 'coins', 'isDead', 'updatedAt']));
+    }
+  }
+}

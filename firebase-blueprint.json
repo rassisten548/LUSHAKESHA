@@ -1,0 +1,58 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A registered user profile",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "username": { "type": "string" },
+        "createdAt": { "type": "number", "description": "Timestamp" }
+      },
+      "required": ["uid", "username", "createdAt"]
+    },
+    "GameSession": {
+      "title": "GameSession",
+      "description": "A multiplayer game instance",
+      "type": "object",
+      "properties": {
+        "hostId": { "type": "string" },
+        "status": { "type": "string", "enum": ["waiting", "playing", "finished"] },
+        "seed": { "type": "number" },
+        "createdAt": { "type": "number", "description": "Timestamp" }
+      },
+      "required": ["hostId", "status", "createdAt", "seed"]
+    },
+    "PlayerState": {
+      "title": "PlayerState",
+      "description": "In-game state of a player in a specific game session",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "character": { "type": "string", "enum": ["Кеша", "Луша"] },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "hp": { "type": "number" },
+        "coins": { "type": "number" },
+        "isDead": { "type": "boolean" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["userId", "username", "character", "x", "y", "hp", "coins", "isDead", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Global user profiles"
+    },
+    "/games/{gameId}": {
+      "schema": { "$ref": "#/entities/GameSession" },
+      "description": "Active and past game sessions"
+    },
+    "/games/{gameId}/players/{playerId}": {
+      "schema": { "$ref": "#/entities/PlayerState" },
+      "description": "Live state of each player in a game"
+    }
+  }
+}
