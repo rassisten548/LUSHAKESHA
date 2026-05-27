@@ -356,11 +356,36 @@ export function Game() {
               }
               setHasJoinedRoom(true);
           } else {
-              // Guest players entering via a link must ALWAYS enter a name and choose a character first!
-              // This guarantees they are never automatically joined or bypassed without explicit onboarding input.
-              setGuestName(activeUsername === 'NAMELESS' ? '' : activeUsername);
-              setGuestBird(activeCharacter);
-              setHasJoinedRoom(false);
+              // Guest players join automatically! No mandatory selection screen.
+              let guestUsername = activeUsername;
+              if (guestUsername === 'NAMELESS') {
+                  guestUsername = `GUEST_${Math.floor(100 + Math.random() * 900)}`;
+                  useGameStore.getState().setUsername(guestUsername);
+              }
+              const guestChar = activeCharacter || 'Кеша';
+              
+              if (!pSnap.exists()) {
+                  await setDoc(pRef, {
+                      userId: activeUserId,
+                      username: guestUsername,
+                      character: guestChar,
+                      x: 100, y: 300, hp: 3, coins: 0, isDead: false, updatedAt: Date.now()
+                  });
+              } else {
+                  // Already registered
+                  const pData = pSnap.data();
+                  if (pData?.username) {
+                      guestUsername = pData.username;
+                      useGameStore.getState().setUsername(guestUsername);
+                  }
+                  if (pData?.character) {
+                      useGameStore.getState().setCharacter(pData.character);
+                  }
+                  await updateDoc(pRef, {
+                      x: 100, y: 300, hp: 3, isDead: false, updatedAt: Date.now()
+                  });
+              }
+              setHasJoinedRoom(true);
           }
       } catch (e) {
           console.error(e);
