@@ -8,14 +8,18 @@ import { Play } from 'lucide-react';
 import { motion } from 'motion/react';
 
 const PixelParrot = ({ type }: { type: CharacterType }) => {
-    const b = type === 'Кеша' ? 'bg-sky-400' : 'bg-lime-400';
-    const l = type === 'Кеша' ? 'bg-sky-500' : 'bg-lime-500';
-    const d = type === 'Кеша' ? 'bg-sky-200' : 'bg-yellow-200';
+    let b = 'bg-sky-400';
+    let l = 'bg-sky-500';
+    let d = 'bg-sky-200';
     const e = 'bg-black';
     const w = 'bg-white';
     const k = 'bg-amber-500';
     const f = 'bg-orange-600';
     const _ = 'bg-transparent';
+
+    if (type === 'Луша') {
+        b = 'bg-lime-400'; l = 'bg-lime-500'; d = 'bg-yellow-200';
+    }
     
     // 8x8 pixel grid for the parrot idle frame
     const grid = [
@@ -147,31 +151,25 @@ export function Home() {
           </div>
 
           <div>
-            <label className="block text-xl font-bold text-black mb-4 uppercase">Select Bird</label>
+            <label className="block text-xl font-bold text-black mb-3 uppercase">Select Bird</label>
             <div className="grid grid-cols-2 gap-4">
-              <button
-                type="button"
-                onClick={() => setSelectedChar('Кеша')}
-                className={cn(
-                  "p-4 pixel-box transition-all flex flex-col items-center gap-3 relative overflow-hidden",
-                  selectedChar === 'Кеша' ? "bg-sky-200" : "bg-slate-100"
-                )}
-              >
-                <PixelParrot type="Кеша" />
-                <span className="text-xl font-bold uppercase drop-shadow-md">Kesha</span>
-              </button>
-              
-              <button
-                type="button"
-                onClick={() => setSelectedChar('Луша')}
-                className={cn(
-                  "p-4 pixel-box transition-all flex flex-col items-center gap-3 relative overflow-hidden",
-                  selectedChar === 'Луша' ? "bg-lime-200" : "bg-slate-100"
-                )}
-              >
-                <PixelParrot type="Луша" />
-                <span className="text-xl font-bold uppercase drop-shadow-md">Lusha</span>
-              </button>
+              {([
+                { id: 'Кеша', name: 'Kesha', color: 'bg-sky-200' },
+                { id: 'Луша', name: 'Lusha', color: 'bg-lime-200' }
+              ] as const).map((bird) => (
+                <button
+                  key={bird.id}
+                  type="button"
+                  onClick={() => setSelectedChar(bird.id)}
+                  className={cn(
+                    "p-3 pixel-box transition-all flex flex-col items-center gap-2 relative overflow-hidden border-2 border-black cursor-pointer",
+                    selectedChar === bird.id ? bird.color + " ring-4 ring-black" : "bg-slate-50 opacity-70 hover:opacity-100"
+                  )}
+                >
+                  <PixelParrot type={bird.id} />
+                  <span className="text-base font-bold uppercase tracking-tight">{bird.name}</span>
+                </button>
+              ))}
             </div>
           </div>
 

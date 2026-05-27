@@ -26,7 +26,7 @@ const getInitialUsername = (): string => {
 
 const getInitialCharacter = (): CharacterType => {
   const char = localStorage.getItem('parrot_run_character');
-  return (char === 'Кеша' || char === 'Луша') ? char : 'Кеша';
+  return (char === 'Кеша' || char === 'Луша') ? (char as CharacterType) : 'Кеша';
 };
 
 export const useGameStore = create<GameState>((set) => ({

@@ -8,6 +8,44 @@ import { Coins, Zap, Heart, Orbit, ArrowUp, ArrowLeft, ArrowRight } from 'lucide
 import { cn } from '../lib/utils';
 import { generateChunk, GameObject } from '../lib/GameEngine';
 
+const LobbyParrotPreview = ({ type }: { type: CharacterType }) => {
+    let b = 'bg-sky-400';
+    let l = 'bg-sky-500';
+    let d = 'bg-sky-200';
+    const e = 'bg-black';
+    const w = 'bg-white';
+    const k = 'bg-amber-500';
+    const f = 'bg-orange-600';
+    const _ = 'bg-transparent';
+
+    if (type === 'Луша') {
+        b = 'bg-lime-400'; l = 'bg-lime-500'; d = 'bg-yellow-200';
+    }
+    
+    const grid = [
+        [_,_,b,b,b,b,_,_],
+        [_,b,b,w,e,b,k,_],
+        [_,b,b,b,b,k,_,_],
+        [l,l,b,d,d,b,_,_],
+        [l,l,b,d,d,b,_,_],
+        [_,_,b,b,b,_,_,_],
+        [_,_,f,_,f,_,_,_],
+        [_,_,_,_,_,_,_,_]
+    ];
+
+    return (
+        <div className="flex flex-col w-12 h-12 pointer-events-none select-none">
+           {grid.map((row, r) => (
+               <div key={r} className="flex flex-1">
+                  {row.map((color, c) => (
+                      <div key={c} className={`flex-1 min-w-0 ${color}`} />
+                  ))}
+               </div>
+           ))}
+        </div>
+    );
+};
+
 const drawPixelParrot = (ctx: CanvasRenderingContext2D, px: number, py: number, width: number, type: CharacterType, isDead: boolean, now: number) => {
     const ps = width / 8;
     const isFlap = Math.floor(now / 150) % 2 === 0;
@@ -19,9 +57,14 @@ const drawPixelParrot = (ctx: CanvasRenderingContext2D, px: number, py: number, 
         ctx.rotate(Math.PI);
     }
     
-    const b = type === 'Кеша' ? '#38bdf8' : '#a3e635'; // body
-    const l = type === 'Кеша' ? '#0ea5e9' : '#84cc16'; // wing
-    const d = type === 'Кеша' ? '#bae6fd' : '#fef08a'; // belly
+    let b = '#38bdf8'; // body
+    let l = '#0ea5e9'; // wing
+    let d = '#bae6fd'; // belly
+
+    if (type === 'Луша') {
+        b = '#a3e635'; l = '#84cc16'; d = '#fef08a';
+    }
+
     const e = '#000000'; // eye
     const w = '#ffffff'; // white eye
     const k = '#f59e0b'; // beak
@@ -70,7 +113,7 @@ const JUMP_FORCE = -12;
 const SPEED = 5;
 const FRICTION = 0.8;
 const GROUND_Y = 500;
-const SYNC_INTERVAL = 300;
+const SYNC_INTERVAL = 600;
 
 interface PlayerNetworkState {
   userId: string;
@@ -84,6 +127,71 @@ interface PlayerNetworkState {
   updatedAt: number;
 }
 
+// --- Sound Synthesis Helpers ---
+const playChirpSound = () => {
+    try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.type = 'triangle';
+        const now = audioCtx.currentTime;
+        osc.frequency.setValueAtTime(600, now);
+        osc.frequency.exponentialRampToValueAtTime(150, now + 0.4);
+        
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.45);
+        
+        osc.start(now);
+        osc.stop(now + 0.45);
+    } catch (e) {}
+};
+
+const playCoinSound = () => {
+    try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.type = 'sine';
+        const now = audioCtx.currentTime;
+        osc.frequency.setValueAtTime(587.33, now); // D5
+        osc.frequency.setValueAtTime(880, now + 0.08); // A5
+
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+        
+        osc.start(now);
+        osc.stop(now + 0.25);
+    } catch (e) {}
+};
+
+const playPowerupSound = () => {
+    try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.type = 'triangle';
+        const now = audioCtx.currentTime;
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.linearRampToValueAtTime(600, now + 0.15);
+        osc.frequency.linearRampToValueAtTime(900, now + 0.3);
+
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        
+        osc.start(now);
+        osc.stop(now + 0.3);
+    } catch (e) {}
+};
+
 export function Game() {
   const { gameId } = useParams();
   const { userId, username, character } = useGameStore();
@@ -94,11 +202,19 @@ export function Game() {
   const [gameState, setGameState] = useState<'waiting' | 'playing' | 'finished'>('waiting');
   
   const [players, setPlayers] = useState<Record<string, PlayerNetworkState>>({});
+  const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(true);
   
   const [localHp, setLocalHp] = useState(3);
   const [localCoins, setLocalCoins] = useState(0);
   const [localDead, setLocalDead] = useState(false);
   const [localStarted, setLocalStarted] = useState(false);
+
+  // Guest bird chooser overlay state
+  const [hasJoinedRoom, setHasJoinedRoom] = useState(false);
+  const [guestName, setGuestName] = useState('');
+  const [guestBird, setGuestBird] = useState<CharacterType>('Кеша');
+  const [joiningGuest, setJoiningGuest] = useState(false);
+  const [guestError, setGuestError] = useState('');
 
   // Invite link copying state helpers
   const [copied, setCopied] = useState(false);
@@ -143,12 +259,19 @@ export function Game() {
   const gameStateRef = useRef(gameState);
   const seedRef = useRef(0);
 
+  // Sync caches
+  const playersRef = useRef<Record<string, PlayerNetworkState>>({});
+  const renderCoordsRef = useRef<Record<string, { x: number, y: number }>>({});
+  const collectedGlobalRef = useRef<Record<string, number>>({});
+
   // Local physics state
   const physicsRef = useRef({
     x: 100, y: 300, vx: 0, vy: 0, 
     hp: 3, coins: 0, isDead: false, started: false,
     speedBoostUntil: 0, slowUntil: 0,
-    collectedObjects: new Set<string>()
+    collectedObjects: new Set<string>(),
+    invincibleUntil: 0,
+    onPlatform: false
   });
 
   // Input states
@@ -183,19 +306,35 @@ export function Game() {
       try {
           const pRef = doc(db, 'games', gameId, 'players', activeUserId);
           const pSnap = await getDoc(pRef);
-          if (!pSnap.exists()) {
-             await setDoc(pRef, {
-               userId: activeUserId, 
-               username: activeUsername, 
-               character: activeCharacter,
-               x: 100, y: 300, hp: 3, coins: 0, isDead: false, updatedAt: Date.now()
-             });
+          
+          if (hostIsUser) {
+              if (!pSnap.exists()) {
+                 await setDoc(pRef, {
+                   userId: activeUserId, 
+                   username: activeUsername, 
+                   character: activeCharacter,
+                   x: 100, y: 300, hp: 3, coins: 0, isDead: false, updatedAt: Date.now()
+                 });
+              } else {
+                 await updateDoc(pRef, {
+                    x: 100, y: 300, hp: 3, isDead: false, updatedAt: Date.now()
+                 });
+              }
+              setHasJoinedRoom(true);
           } else {
-             const existingUsername = pSnap.data()?.username || activeUsername;
-             useGameStore.getState().setUsername(existingUsername);
-             await updateDoc(pRef, {
-                x: 100, y: 300, hp: 3, isDead: false, updatedAt: Date.now()
-             });
+              // Guest players
+              if (pSnap.exists()) {
+                 // Already registered in this room
+                 const pData = pSnap.data();
+                 useGameStore.getState().setUsername(pData.username || activeUsername);
+                 useGameStore.getState().setCharacter(pData.character || activeCharacter);
+                 setHasJoinedRoom(true);
+              } else {
+                 // New guest joiner - force them to choose a name and bird selection first!
+                 setGuestName(activeUsername === 'NAMELESS' ? '' : activeUsername);
+                 setGuestBird(activeCharacter);
+                 setHasJoinedRoom(false);
+              }
           }
       } catch (e) {
           console.error(e);
@@ -209,6 +348,8 @@ export function Game() {
         if (doc.exists()) {
             setGameState(doc.data()?.status);
             gameStateRef.current = doc.data()?.status;
+            // Capture global respawning items
+            collectedGlobalRef.current = doc.data()?.collected || {};
         }
     });
 
@@ -225,17 +366,20 @@ export function Game() {
           }
           if (!data.isDead) allDead = false;
       });
-      setPlayers(pData);
+      playersRef.current = pData; // Update ref for 60FPS canvas loop
+      if (gameStateRef.current !== 'playing') {
+          setPlayers(pData);
+      }
 
       // Check if host status demands finishing game status
       const checkFinish = async () => {
          const gRef = doc(db, 'games', gameId);
          const gSnap = await getDoc(gRef);
          if (gSnap.exists()) {
-             const gData = gSnap.data();
-             if (hasPlayers && allDead && gData.hostId === activeUserId && gameStateRef.current === 'playing') {
-                 await updateDoc(gRef, { status: 'finished' });
-             }
+              const gData = gSnap.data();
+              if (hasPlayers && allDead && gData.hostId === activeUserId && gameStateRef.current === 'playing') {
+                  await updateDoc(gRef, { status: 'finished' });
+              }
          }
       };
       checkFinish().catch(console.error);
@@ -253,6 +397,15 @@ export function Game() {
           await updateDoc(doc(db, 'games', gameId), { status: 'playing' });
       }
   }
+
+  // Periodically sync playersRef.current to players state during gameplay to avoid React overloading
+  useEffect(() => {
+    if (gameState !== 'playing') return;
+    const interval = setInterval(() => {
+        setPlayers({ ...playersRef.current });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [gameState]);
 
   // --- GAME LOOP ---
   useEffect(() => {
@@ -285,8 +438,10 @@ export function Game() {
              phys.started = true;
              setLocalStarted(true);
          }
-         if (phys.y >= GROUND_Y - 40) phys.vy = JUMP_FORCE;
          keys.current.up = true;
+         if (phys.onPlatform) {
+             phys.vy = JUMP_FORCE;
+         }
       }
     }
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -311,10 +466,12 @@ export function Game() {
 
         // Physics
         let currentChunk = Math.floor(phys.x / 1000);
+        let onPlatform = false;
+
         if (!phys.isDead && phys.started) {
             let currentSpeed = SPEED;
             if (now < phys.speedBoostUntil) currentSpeed *= 1.5;
-            if (now < phys.slowUntil) currentSpeed *= 0.8;
+            if (now < phys.slowUntil) currentSpeed *= 0.6; // Puddles temporarily slow down to 60% speed
 
             phys.vx = currentSpeed; // Auto run
 
@@ -328,55 +485,108 @@ export function Game() {
             if (phys.y > GROUND_Y - 40) {
                 phys.y = GROUND_Y - 40;
                 phys.vy = 0;
+                onPlatform = true;
             }
 
-            // Chunks and Collisions
+            // Chunks and solid platform / object collisions
             currentChunk = Math.floor(phys.x / 1000);
             for (let i = currentChunk - 1; i <= currentChunk + 1; i++) {
                 if (!chunks[i]) chunks[i] = generateChunk(i, seedRef.current);
                 
-                // Collisions
+                // Track solid pass-through platform landings (Mario Style)
                 chunks[i].forEach(obj => {
-                    if (phys.collectedObjects.has(obj.id)) return;
-                    
+                    if (obj.type === 'platform') {
+                        // Check horizontal intersection boundaries
+                        const isXIntersect = phys.x + 32 > obj.x && phys.x + 8 < obj.x + obj.width;
+                        // Was previous bottom above top of platform?
+                        const isAboveBefore = (phys.y + 40 - phys.vy) <= obj.y + 6;
+                        // Is current bottom past top layer of platform?
+                        const isAtSurfaceNow = (phys.y + 40) >= obj.y && (phys.y + 40) <= obj.y + 15;
+
+                        if (isXIntersect && isAboveBefore && isAtSurfaceNow && phys.vy >= 0) {
+                            phys.y = obj.y - 40;
+                            phys.vy = 0;
+                            onPlatform = true;
+                        }
+                    }
+                });
+
+                // Helper item and obstacle collisions
+                chunks[i].forEach(obj => {
+                    if (obj.type === 'platform') return; // Handled separately above
+
+                    // Skip locally/globally collected respawning items
+                    const isCollectedGlobally = collectedGlobalRef.current[obj.id] && now < collectedGlobalRef.current[obj.id];
+                    if (isCollectedGlobally) return;
+
                     const isHit = phys.x < obj.x + obj.width && phys.x + 40 > obj.x &&
                                   phys.y < obj.y + obj.height && phys.y + 40 > obj.y;
 
                     if (isHit) {
                         if (obj.type === 'coin') {
                             phys.coins++;
-                            phys.collectedObjects.add(obj.id);
+                            playCoinSound();
                             setLocalCoins(phys.coins);
+                            updateDoc(doc(db, 'games', gameId, 'players', userId), {
+                                 hp: phys.hp, coins: phys.coins, updatedAt: now
+                            });
+                            // Store global respawn time of 5-10s randomly for excitement
+                            updateDoc(doc(db, 'games', gameId), {
+                                 [`collected.${obj.id}`]: now + (6000 + Math.floor(Math.random() * 4000))
+                            });
+                        } else if (obj.type === 'carrot') {
+                            phys.speedBoostUntil = now + 10000; // 10 seconds speed boost as requested!
+                            playPowerupSound();
+                            updateDoc(doc(db, 'games', gameId), {
+                                 [`collected.${obj.id}`]: now + (8000 + Math.floor(Math.random() * 4000))
+                            });
                         } else if (obj.type === 'health') {
                             phys.hp = Math.min(3, phys.hp + 1);
-                            phys.collectedObjects.add(obj.id);
+                            playPowerupSound();
                             setLocalHp(phys.hp);
+                            updateDoc(doc(db, 'games', gameId, 'players', userId), {
+                                 hp: phys.hp, updatedAt: now
+                            });
+                            updateDoc(doc(db, 'games', gameId), {
+                                 [`collected.${obj.id}`]: now + (8000 + Math.floor(Math.random() * 4000))
+                            });
                         } else if (obj.type === 'obstacle') {
-                            phys.hp--;
-                            phys.collectedObjects.add(obj.id);
-                            setLocalHp(phys.hp);
-                            phys.vy = -5; // knockback
-                            phys.vx = -10;
-                            if (phys.hp <= 0) {
-                                phys.isDead = true;
-                                setLocalDead(true);
+                            // Only trigger hazard hit if not invincible
+                            if (!phys.invincibleUntil || now >= phys.invincibleUntil) {
+                                phys.hp--;
+                                playChirpSound(); // Plaintive chirp sound !
+                                setLocalHp(phys.hp);
+                                phys.vy = -6; // knockback bounce back up
+                                phys.vx = -8;
+                                phys.invincibleUntil = now + 1200; // 1.2s safety flash
+
+                                if (phys.hp <= 0) {
+                                    phys.isDead = true;
+                                    setLocalDead(true);
+                                }
+                                updateDoc(doc(db, 'games', gameId, 'players', userId), {
+                                     hp: phys.hp, isDead: phys.isDead, updatedAt: now
+                                });
                             }
                         } else if (obj.type === 'slow') {
-                            phys.slowUntil = now + 2000;
+                            phys.slowUntil = now + 5000; // Slow down for 5 seconds as requested!
                         }
                     }
                 });
             }
         }
 
-        // Draw
+        // Cache persistent state on ref to support jumping actions from other event listeners
+        phys.onPlatform = onPlatform;
+
+        // Draw Sky
         ctx.fillStyle = '#38bdf8'; // sky blue
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         let targetCameraX = phys.x;
         if (phys.isDead) { // Follow fastest player
             let fastX = phys.x;
-            Object.values(players).forEach((p: PlayerNetworkState) => {
+            Object.values(playersRef.current).forEach((p: PlayerNetworkState) => {
                 if (!p.isDead && p.x > fastX) fastX = p.x;
             });
             targetCameraX = fastX;
@@ -391,7 +601,7 @@ export function Game() {
         ctx.save();
         ctx.translate(-cameraX, 0);
 
-        // Draw Clouds (parallax)
+        // Draw Clouds (parallax scrolling)
         ctx.fillStyle = '#ffffff';
         for (let i = targetChunk - 1; i <= targetChunk + 2; i++) {
             const cx = i * 1000 + (Math.abs((seedRef.current + i * 777) % 500));
@@ -399,7 +609,7 @@ export function Game() {
             ctx.fillRect(cx + 20 - cameraX * 0.5, 80, 60, 20);
         }
 
-        // Ground
+        // Ground top line and mud layer
         ctx.fillStyle = '#4ade80'; // grass top
         ctx.fillRect(cameraX, GROUND_Y, canvas.width, 20);
         ctx.fillStyle = '#a3e635'; // grass body
@@ -409,7 +619,10 @@ export function Game() {
         for (let i = targetChunk - 1; i <= targetChunk + 2; i++) {
             if (!chunks[i]) continue;
             chunks[i].forEach(obj => {
-                if (phys.collectedObjects.has(obj.id)) return;
+                // Check globally collected status before rendering
+                const isCollectedGlobally = collectedGlobalRef.current[obj.id] && now < collectedGlobalRef.current[obj.id];
+                if (isCollectedGlobally) return;
+
                 if (obj.x < cameraX - 100 || obj.x > cameraX + canvas.width + 100) return;
 
                 if (obj.type === 'coin') {
@@ -422,6 +635,31 @@ export function Game() {
                     ctx.arc(obj.x + 10, obj.y + 10, 6, 0, Math.PI * 2);
                     ctx.fillStyle = '#fef08a'; // bright gold center
                     ctx.fill();
+                } else if (obj.type === 'carrot') {
+                    // Draw a cute retro carrot item
+                    ctx.fillStyle = '#f97316'; // orange carrot core
+                    ctx.beginPath();
+                    ctx.moveTo(obj.x + 6, obj.y + 4);
+                    ctx.lineTo(obj.x + 18, obj.y + 4);
+                    ctx.lineTo(obj.x + 12, obj.y + 22);
+                    ctx.closePath();
+                    ctx.fill();
+                    // Green leafy carrot plume
+                    ctx.fillStyle = '#22c55e';
+                    ctx.fillRect(obj.x + 10, obj.y - 2, 4, 6);
+                } else if (obj.type === 'platform') {
+                    // Drawn as sturdy clay-colored retro bricks
+                    ctx.fillStyle = '#b45309'; 
+                    ctx.fillRect(obj.x, obj.y, obj.width, obj.height);
+                    
+                    // Luminous green moss/grass top layer
+                    ctx.fillStyle = '#4ade80'; 
+                    ctx.fillRect(obj.x, obj.y, obj.width, 6);
+                    
+                    // Sleek pixel grid outlines
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(obj.x, obj.y, obj.width, obj.height);
                 } else if (obj.type === 'health') { // Apple
                     ctx.beginPath();
                     ctx.arc(obj.x + 15, obj.y + 18, 12, 0, Math.PI * 2);
@@ -464,38 +702,52 @@ export function Game() {
             });
         }
 
-        // Draw Other Players
-        Object.values(players).forEach((p: PlayerNetworkState) => {
+        // Draw Other Players with Smooth Interpolation Lerp
+        Object.values(playersRef.current).forEach((p: PlayerNetworkState) => {
              if (p.isDead || p.userId === userId) return;
              if (p.x < cameraX - 100 || p.x > cameraX + canvas.width + 100) return;
              
-             drawPixelParrot(ctx, p.x, p.y, 40, p.character, p.isDead, now);
+             // Initialize smoother tracking positions
+             if (!renderCoordsRef.current[p.userId]) {
+                 renderCoordsRef.current[p.userId] = { x: p.x, y: p.y };
+             }
+             const rc = renderCoordsRef.current[p.userId];
+             rc.x += (p.x - rc.x) * 0.15; // Smooth horizontal slide
+             rc.y += (p.y - rc.y) * 0.15; // Smooth vertical glide
+
+             drawPixelParrot(ctx, rc.x, rc.y, 40, p.character, p.isDead, now);
              // Nicknames for others
              ctx.font = 'bold 14px "VT323", monospace';
              const textWidth = ctx.measureText(p.username).width;
              ctx.fillStyle = 'rgba(0,0,0,0.5)';
-             ctx.fillRect(p.x + 20 - textWidth/2 - 4, p.y - 18, textWidth + 8, 14);
+             ctx.fillRect(rc.x + 20 - textWidth/2 - 4, rc.y - 18, textWidth + 8, 14);
              ctx.fillStyle = '#fbbf24';
              ctx.textAlign = 'center';
-             ctx.fillText(p.username, p.x + 20, p.y - 6);
+             ctx.fillText(p.username, rc.x + 20, rc.y - 6);
              ctx.textAlign = 'left';
         });
 
         // Draw Local Player
         if (!phys.isDead) {
-            drawPixelParrot(ctx, phys.x, phys.y, 40, character, phys.isDead, now);
+            // Blink if currently invincible (damage cooldown)
+            const isInvincible = phys.invincibleUntil && now < phys.invincibleUntil;
+            const skipPulse = isInvincible && Math.floor(now / 100) % 2 === 0;
+
+            if (!skipPulse) {
+                drawPixelParrot(ctx, phys.x, phys.y, 40, character, phys.isDead, now);
+            }
             
             // Name tag for local player
             ctx.font = 'bold 14px "VT323", monospace';
             const textWidth = ctx.measureText(username).width;
             ctx.fillStyle = 'rgba(0,0,0,0.5)';
             ctx.fillRect(phys.x + 20 - textWidth/2 - 4, phys.y - 18, textWidth + 8, 14);
-            ctx.fillStyle = '#a3e635'; // distinct color
+            ctx.fillStyle = '#a3e635'; // distinct light green color
             ctx.textAlign = 'center';
             ctx.fillText(username, phys.x + 20, phys.y - 6);
             ctx.textAlign = 'left';
             
-            // Aura for buffs/debuffs
+            // Aura overlay for active boosts/debuffs
             if (now < phys.speedBoostUntil) {
                 ctx.strokeStyle = '#fef08a'; ctx.lineWidth = 4; ctx.strokeRect(phys.x-4, phys.y-4, 48, 48);
             }
@@ -518,7 +770,7 @@ export function Game() {
         window.removeEventListener('resize', resize);
         cancelAnimationFrame(requestRef.current);
     }
-  }, [gameState, userId, gameId, isHost, players, character, loading]);
+  }, [gameState, userId, gameId, isHost, character, loading]);
 
   const buySpeed = () => {
       if (physicsRef.current.coins >= 10 && !physicsRef.current.isDead) {
@@ -536,7 +788,7 @@ export function Game() {
           // Find fast/slow
           let fastX = physicsRef.current.x;
           let slowX = physicsRef.current.x;
-          Object.values(players).forEach((p: PlayerNetworkState) => {
+          Object.values(playersRef.current).forEach((p: PlayerNetworkState) => {
               if (p.isDead) return;
               if (p.x > fastX) fastX = p.x;
               if (p.x < slowX) slowX = p.x;
@@ -671,7 +923,99 @@ export function Game() {
             </div>
         )}
 
-        {gameState === 'waiting' && !loading && (
+        {/* Guest Onboarding Choice Dialog */}
+        {gameState === 'waiting' && !loading && !hasJoinedRoom && (
+             <div className="absolute inset-0 flex flex-col items-center justify-center bg-sky-450 z-50 p-4" style={{ backgroundImage: 'radial-gradient(#38bdf8 20%, transparent 20%)', backgroundSize: '20px 20px' }}>
+                <div className="bg-white border-4 border-black p-8 w-full max-w-lg shadow-[8px_8px_0_0_#000] relative z-50 text-black font-mono">
+                    <h2 className="text-3xl font-black text-center uppercase tracking-wider mb-2 text-transparent" style={{ WebkitTextStroke: '1.5px black' }}>
+                         <span className="text-yellow-405">P</span><span className="text-orange-400">R</span><span className="text-red-400">E</span><span className="text-pink-400">P</span><span className="text-purple-400">A</span><span className="text-blue-400">R</span>E FOR RACE
+                    </h2>
+                    <p className="text-center text-sm font-bold text-slate-600 uppercase mb-6">Enter name & choose your flight feather!</p>
+                    
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-black uppercase mb-1 text-slate-700">✍ YOUR PILOT NAME</label>
+                            <input
+                                maxLength={12}
+                                type="text"
+                                value={guestName}
+                                onChange={(e) => setGuestName(e.target.value.toUpperCase())}
+                                className="w-full bg-slate-100 border-4 border-black px-4 py-2 text-xl font-bold uppercase focus:outline-none placeholder:text-slate-400"
+                                placeholder="PILOT NAME"
+                                required
+                            />
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-black uppercase mb-2 text-slate-700">🎨 SELECT BIRD CHARACTER</label>
+                            <div className="grid grid-cols-2 gap-3">
+                                {([
+                                    { id: 'Кеша', name: 'Kesha', color: 'bg-sky-200' },
+                                    { id: 'Луша', name: 'Lusha', color: 'bg-lime-200' }
+                                ] as const).map((bird) => (
+                                    <button
+                                        key={bird.id}
+                                        type="button"
+                                        onClick={() => setGuestBird(bird.id)}
+                                        className={cn(
+                                            "p-4 border-2 border-black flex flex-col items-center gap-2 transition-all cursor-pointer",
+                                            guestBird === bird.id ? bird.color + " shadow-[4px_4px_0_0_#000] ring-4 ring-black" : "bg-slate-50 opacity-60 hover:opacity-100"
+                                        )}
+                                    >
+                                        <div className="scale-100 pointer-events-none origin-center p-1">
+                                            <LobbyParrotPreview type={bird.id} />
+                                        </div>
+                                        <span className="text-sm font-black uppercase text-center">{bird.name}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        
+                        {guestError && (
+                            <div className="bg-red-200 border-4 border-red-500 p-2 text-center text-red-700 font-bold text-xs uppercase font-mono">
+                                {guestError}
+                            </div>
+                        )}
+                        
+                        <button
+                            type="button"
+                            disabled={joiningGuest}
+                            onClick={async () => {
+                                if (!guestName.trim()) {
+                                    setGuestError('Enter your pilot name first!');
+                                    return;
+                                }
+                                setJoiningGuest(true);
+                                setGuestError('');
+                                try {
+                                    const activeUserId = userId || generateLocalUserId();
+                                    useGameStore.getState().setUsername(guestName.toUpperCase());
+                                    useGameStore.getState().setCharacter(guestBird);
+                                    
+                                    const pRef = doc(db, 'games', gameId!, 'players', activeUserId);
+                                    await setDoc(pRef, {
+                                        userId: activeUserId,
+                                        username: guestName.toUpperCase(),
+                                        character: guestBird,
+                                        x: 100, y: 300, hp: 3, coins: 0, isDead: false, updatedAt: Date.now()
+                                    });
+                                    setHasJoinedRoom(true);
+                                } catch (e: any) {
+                                    setGuestError(e.message || 'Error configuring pilot package');
+                                } finally {
+                                    setJoiningGuest(false);
+                                }
+                            }}
+                            className="w-full bg-green-400 hover:bg-green-300 border-4 border-black text-black py-4 font-black text-xl uppercase shadow-[4px_4px_0_0_#000] active:translate-y-0.5 transition-all text-center cursor-pointer"
+                        >
+                            {joiningGuest ? 'REGISTERING...' : '✓ JOIN LOBBY & RACE!'}
+                        </button>
+                    </div>
+                </div>
+             </div>
+        )}
+
+        {gameState === 'waiting' && !loading && hasJoinedRoom && (
              <div className="absolute inset-0 flex flex-col items-center justify-center bg-sky-400 z-20 p-4" style={{ backgroundImage: 'radial-gradient(#38bdf8 20%, transparent 20%)', backgroundSize: '20px 20px' }}>
                 <div className="bg-white pixel-box p-8 w-[95%] max-w-4xl flex flex-col items-center relative z-10 before:absolute before:inset-0 before:bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPgo8cmVjdCB3aWR0aD0iOCIgaGVpZ2h0PSI4IiBmaWxsPSIjZmZmIj48L3JlY3Q+CjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiNmM2Y0ZjYiPjwvcmVjdD4KPHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjQiIGhlaWdodD0iNCIgZmlsbD0iI2YzZjRmNiI+PC9yZWN0Pgo8L3N2Zz4=')] before:opacity-50 before:pointer-events-none overflow-y-auto max-h-full">
                     
@@ -695,60 +1039,78 @@ export function Game() {
                         </div>
                     </div>
                     
-                    <div className="flex flex-wrap justify-center gap-5 mb-8 w-full relative z-10">
-                        {/* Interactive Local Player Card (Customize nickname/bird inside room) */}
-                        <div className="flex flex-col items-center bg-slate-100 p-4 pixel-box hover:shadow-[10px_10px_0_0_#3b82f6] transition-all w-52 border-4 border-blue-500 relative">
-                            <span className="text-blue-600 text-xs font-black uppercase tracking-widest bg-blue-100 px-3 py-0.5 border-2 border-blue-600 rounded-full mb-3 select-none">YOU</span>
-                            
-                            <button 
-                                type="button"
-                                onClick={async () => {
-                                    const nextChar = character === 'Кеша' ? 'Луша' : 'Кеша';
-                                    useGameStore.getState().setCharacter(nextChar);
-                                    if (gameId && userId) {
-                                        await updateDoc(doc(db, 'games', gameId, 'players', userId), {
-                                            character: nextChar
-                                        });
-                                    }
-                                }}
-                                title="Click to switch character Kesha / Lusha"
-                                className={cn("w-24 h-24 border-4 border-black mb-3 relative overflow-hidden group cursor-pointer active:scale-95 transition-transform", character === 'Кеша' ? "bg-sky-400 animate-pulse" : "bg-lime-400 animate-pulse")}
-                            >
-                                <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[10px] uppercase font-bold text-white tracking-widest py-1 select-none">SWAP BIRD</div>
-                            </button>
-                            
-                            {/* Editable Nickname Input in real-time */}
-                            <input
-                                type="text"
-                                maxLength={12}
-                                value={username || ''}
-                                onChange={async (e) => {
-                                    const newName = e.target.value.toUpperCase();
-                                    useGameStore.getState().setUsername(newName);
-                                    if (gameId && userId) {
-                                        await updateDoc(doc(db, 'games', gameId, 'players', userId), {
-                                            username: newName
-                                        });
-                                    }
-                                }}
-                                className="w-full text-center text-lg font-extrabold uppercase text-black bg-white border-2 border-dashed border-slate-400 px-1 py-1 font-mono focus:outline-none focus:border-blue-500 mb-1"
-                                placeholder="NAMELESS"
-                            />
-                            
-                            <span className="text-slate-500 text-[10px] uppercase tracking-wider font-bold">Touch name to rewrite</span>
-                        </div>
+                    {/* Character colors map */}
+                    {(() => {
+                        const birdBgColors: Record<CharacterType, string> = {
+                            'Кеша': 'bg-sky-300',
+                            'Луша': 'bg-lime-300'
+                        };
 
-                        {/* Other Remote Players */}
-                        {Object.values(players).map((p: PlayerNetworkState) => (
-                            <div key={p.userId} className="flex flex-col items-center bg-slate-100 p-4 pixel-box hover:-translate-y-1 hover:shadow-[10px_10px_0_0_#10b981] transition-all w-52">
-                                <span className="text-emerald-600 text-xs font-black uppercase tracking-widest bg-emerald-100 px-3 py-0.5 border-2 border-emerald-600 rounded-full mb-3">FRIEND</span>
-                                <div className={cn("w-24 h-24 border-4 border-black mb-3 relative overflow-hidden", p.character === 'Кеша' ? "bg-sky-400" : "bg-lime-400")}>
-                                    <div className="absolute inset-0 bg-black/10"></div>
+                        return (
+                            <div className="flex flex-wrap justify-center gap-5 mb-8 w-full relative z-10">
+                                {/* Interactive Local Player Card (Customize nickname/bird inside room) */}
+                                <div className="flex flex-col items-center bg-slate-100 p-4 pixel-box hover:shadow-[10px_10px_0_0_#3b82f6] transition-all w-52 border-4 border-blue-500 relative text-black">
+                                    <span className="text-blue-600 text-xs font-black uppercase tracking-widest bg-blue-100 px-3 py-0.5 border-2 border-blue-600 rounded-full mb-3 select-none">YOU</span>
+                                    
+                                    <button 
+                                        type="button"
+                                        onClick={async () => {
+                                            const chars: CharacterType[] = ['Кеша', 'Луша'];
+                                            const nextIdx = (chars.indexOf(character) + 1) % chars.length;
+                                            const nextChar = chars[nextIdx];
+                                            useGameStore.getState().setCharacter(nextChar);
+                                            if (gameId && userId) {
+                                                await updateDoc(doc(db, 'games', gameId, 'players', userId), {
+                                                    character: nextChar
+                                                });
+                                            }
+                                        }}
+                                        title="Click to cycle bird character!"
+                                        className={cn("w-24 h-24 border-4 border-black mb-3 flex items-center justify-center relative overflow-hidden group cursor-pointer active:scale-95 transition-transform", birdBgColors[character] || "bg-sky-200 animate-pulse")}
+                                    >
+                                        <div className="scale-125 mb-1.5">
+                                            <LobbyParrotPreview type={character} />
+                                        </div>
+                                        <div className="absolute inset-x-0 bottom-0 bg-black/75 text-[10px] uppercase font-black text-white tracking-widest py-1 select-none z-10">SWAP BIRD</div>
+                                    </button>
+                                    
+                                    {/* Editable Nickname Input in real-time */}
+                                    <input
+                                        type="text"
+                                        maxLength={12}
+                                        value={username || ''}
+                                        onChange={async (e) => {
+                                            const newName = e.target.value.toUpperCase();
+                                            useGameStore.getState().setUsername(newName);
+                                            if (gameId && userId) {
+                                                await updateDoc(doc(db, 'games', gameId, 'players', userId), {
+                                                    username: newName
+                                                });
+                                            }
+                                        }}
+                                        className="w-full text-center text-lg font-extrabold uppercase text-black bg-white border-2 border-dashed border-slate-400 px-1 py-1 font-mono focus:outline-none focus:border-blue-500 mb-1"
+                                        placeholder="NAMELESS"
+                                    />
+                                    
+                                    <span className="text-slate-500 text-[10px] uppercase tracking-wider font-bold">Touch name to rewrite</span>
                                 </div>
-                                <span className="text-xl font-black uppercase text-black text-center truncate w-full px-2" title={p.username}>{p.username}</span>
+
+                                {/* Other Remote Players */}
+                                {Object.values(players).map((p: PlayerNetworkState) => (
+                                    <div key={p.userId} className="flex flex-col items-center bg-slate-100 p-4 pixel-box hover:-translate-y-1 hover:shadow-[10px_10px_0_0_#10b981] transition-all w-52 text-black">
+                                        <span className="text-emerald-600 text-xs font-black uppercase tracking-widest bg-emerald-100 px-3 py-0.5 border-2 border-emerald-600 rounded-full mb-3">FRIEND</span>
+                                        <div className={cn("w-24 h-24 border-4 border-black mb-3 flex items-center justify-center relative overflow-hidden", birdBgColors[p.character] || "bg-sky-200")}>
+                                            <div className="scale-125 mb-1.5">
+                                                <LobbyParrotPreview type={p.character} />
+                                            </div>
+                                            <div className="absolute inset-0 bg-black/5"></div>
+                                        </div>
+                                        <span className="text-xl font-black uppercase text-black text-center truncate w-full px-2" title={p.username}>{p.username}</span>
+                                    </div>
+                                ))}
                             </div>
-                        ))}
-                    </div>
+                        );
+                    })()}
 
                     {isHost ? (
                         <button onClick={startGame} className="bg-lime-400 hover:bg-lime-300 w-full max-w-sm px-8 py-5 pixel-box font-black text-3xl uppercase tracking-widest text-black relative z-10 group overflow-hidden hover:scale-105 transition-transform active:scale-95 cursor-pointer">
@@ -804,6 +1166,88 @@ export function Game() {
                     <span className="font-bold text-base text-black flex items-center gap-1">20 <Coins className="text-yellow-600 fill-yellow-400" size={12}/></span>
                 </button>
             </div>
+        )}
+
+        {/* Live Leaderboard HUD (Who's in the lead & how far ahead) */}
+        {gameState === 'playing' && (
+             <div className="absolute top-16 md:top-20 right-2 md:right-4 z-40 select-none font-mono flex flex-col items-end gap-2 max-w-[240px] md:max-w-xs pointer-events-none">
+                 {!isLeaderboardOpen ? (
+                     <button 
+                         onClick={() => setIsLeaderboardOpen(true)}
+                         className="bg-black/95 hover:bg-black border-2 border-yellow-400 text-yellow-400 px-3 py-1.5 shadow-[2px_2px_0_0_#000] text-xs font-black uppercase tracking-wider pointer-events-auto cursor-pointer flex items-center gap-1.5 touch-manipulation active:scale-95 transition-transform"
+                     >
+                         <span>🏆 STANDINGS</span>
+                     </button>
+                 ) : (
+                     <div className="bg-black/85 border-2 md:border-4 border-black text-white p-2.5 md:p-3 shadow-[2px_2px_0_0_#000] md:shadow-[4px_4px_0_0_#000] w-56 md:w-64 pointer-events-auto rounded-none">
+                         <h3 className="text-sm md:text-xl font-black border-b border-slate-700 pb-1 mb-1.5 uppercase text-yellow-400 tracking-wider flex items-center justify-between">
+                             <span className="flex items-center gap-1">🏆 LEADERBOARD</span>
+                             <div className="flex items-center gap-1.5">
+                                 <span className="text-[9px] bg-yellow-500 text-black px-1.5 py-0.2 md:py-0.5 border border-black font-bold hidden sm:inline-block">LIVE</span>
+                                 <button 
+                                     onClick={() => setIsLeaderboardOpen(false)}
+                                     className="text-white hover:text-red-400 text-xs font-bold font-sans bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 border border-slate-600 cursor-pointer touch-manipulation active:scale-90 select-none"
+                                 >
+                                     ✕
+                                 </button>
+                             </div>
+                         </h3>
+                         <div className="space-y-1 max-h-36 md:max-h-48 overflow-y-auto pr-1">
+                             {(() => {
+                                 // Join local and remote players
+                                 const items = [
+                                     {
+                                         userId: userId || 'local',
+                                         username: username || 'YOU',
+                                         x: physicsRef.current.x,
+                                         isDead: physicsRef.current.isDead,
+                                         character: character
+                                     },
+                                     ...Object.values(players).map((p: any) => ({
+                                         userId: p.userId,
+                                         username: p.username,
+                                         x: p.x,
+                                         isDead: p.isDead,
+                                         character: p.character
+                                     }))
+                                 ]
+                                 .sort((a, b) => b.x - a.x); // Sort descending based on X coordinate!
+
+                                 const leadPositionX = items[0]?.x || 0;
+
+                                 return items.map((player, idx) => {
+                                     const distMeters = Math.floor(player.x / 10);
+                                     const lagMeters = Math.floor((leadPositionX - player.x) / 10);
+                                     const isLeader = idx === 0 && !player.isDead;
+
+                                     return (
+                                         <div key={player.userId} className={cn("flex justify-between items-center text-xs md:text-sm py-0.5 md:py-1 border-b border-slate-800/50 last:border-0", player.isDead && "opacity-40 line-through")}>
+                                             <div className="flex items-center gap-1.5 truncate flex-1 min-w-0">
+                                                 <span className="font-bold text-slate-500">#{idx + 1}</span>
+                                                 <span className={cn("font-black uppercase truncate", player.userId === (userId || 'local') ? "text-lime-400" : "text-yellow-100")}>
+                                                     {player.username}
+                                                 </span>
+                                             </div>
+                                             <div className="flex flex-col items-end shrink-0 pl-1.5">
+                                                 <span className="font-bold text-[10px] md:text-xs">
+                                                     {distMeters}m
+                                                 </span>
+                                                 {player.isDead ? (
+                                                     <span className="text-[8px] md:text-[10px] text-red-500 font-bold uppercase">💀 DEAD</span>
+                                                 ) : isLeader ? (
+                                                     <span className="text-[8px] md:text-[10px] text-yellow-500 font-bold uppercase">👑 LEAD</span>
+                                                 ) : (
+                                                     <span className="text-[8px] md:text-[10px] text-sky-400 font-semibold font-mono">-{lagMeters}m</span>
+                                                 )}
+                                             </div>
+                                         </div>
+                                     );
+                                 });
+                             })()}
+                         </div>
+                     </div>
+                 )}
+             </div>
         )}
 
         {/* Global/Customized Mobile Jump Control Action */}

@@ -9,7 +9,7 @@ export function seededRandom(seed: number) {
 }
 
 export interface GameObject {
-  type: 'obstacle' | 'coin' | 'health' | 'slow';
+  type: 'obstacle' | 'coin' | 'health' | 'slow' | 'platform' | 'carrot';
   x: number;
   y: number;
   width: number;
@@ -22,50 +22,90 @@ export function generateChunk(chunkIndex: number, seed: number): GameObject[] {
   const objects: GameObject[] = [];
   const startX = chunkIndex * 1000;
   
-  // Start with fewer obstacles, increase difficulty gradually
-  // At chunk 0 (0-1000px) - very few traps, mainly coins.
-  const difficulty = Math.min(1.0, chunkIndex / 10); 
-  // numObjects can gradually increase
-  const numObjects = Math.floor(prng() * 10) + 5 + Math.floor(difficulty * 5);
+  const difficulty = Math.min(1.0, chunkIndex / 15); 
   
-  let currentX = startX + (chunkIndex === 0 ? 500 : 200); // Give player 500px head start on chunk 0
+  // Create beautiful solid floating platforms like Mario!
+  // Platform heights are 360px (easily reachable) and 260px (high but reachable)
+  const platformCount = chunkIndex === 0 ? 1 : Math.floor(prng() * 3) + 2; // 2 to 4 platforms
+  const platformPositions: { x: number, y: number, w: number }[] = [];
   
-  for (let i = 0; i < numObjects; i++) {
-    // Gap depends on difficulty
-    const minGap = 200 - difficulty * 100;
-    currentX += minGap + prng() * 150;
+  let currentX = startX + (chunkIndex === 0 ? 400 : 150);
+  
+  for (let p = 0; p < platformCount; p++) {
+    const pWidth = 150 + Math.floor(prng() * 120); // 150px - 270px width
+    const pY = prng() > 0.5 ? 360 : 260; // heights
     
-    // Type probabilities
-    let rand = prng();
-    if (chunkIndex === 0) {
-        // Mostly coins early on
-        rand = prng() < 0.8 ? 0.3 : 0.9;
-    }
-
-    if (rand < 0.5) {
-      // Line of coins
-      const y = Math.max(200, 400 - prng() * 200);
-      objects.push({ type: 'coin', x: currentX, y: y, width: 20, height: 20, id: `coin-${chunkIndex}-${i}-1` });
-      if (prng() > 0.3) objects.push({ type: 'coin', x: currentX + 30, y: y, width: 20, height: 20, id: `coin-${chunkIndex}-${i}-2` });
-      if (prng() > 0.6) objects.push({ type: 'coin', x: currentX + 60, y: y, width: 20, height: 20, id: `coin-${chunkIndex}-${i}-3` });
-      if (prng() > 0.8) objects.push({ type: 'coin', x: currentX + 90, y: y, width: 20, height: 20, id: `coin-${chunkIndex}-${i}-4` });
-    } else if (rand < 0.8 && difficulty > 0.1) {
-      // Obstacle 
-      const isBird = difficulty > 0.3 && prng() > 0.5;
-      if (isBird) {
-         objects.push({ type: 'obstacle', x: currentX, y: 250 + prng()*100, width: 40, height: 30, id: `obs-fly-${chunkIndex}-${i}` });
-      } else {
-         objects.push({ type: 'obstacle', x: currentX, y: 460, width: 40, height: 40, id: `obs-${chunkIndex}-${i}` });
-      }
-      // Guarantee extra gap after an obstacle
-      currentX += 150; // extra padding
-    } else if (rand < 0.95 && difficulty > 0.2) {
-      objects.push({ type: 'slow', x: currentX, y: 480, width: 100, height: 20, id: `slow-${chunkIndex}-${i}` });
-      currentX += 100; // extra padding
-    } else {
-      objects.push({ type: 'health', x: currentX, y: 250 + prng() * 100, width: 30, height: 30, id: `hp-${chunkIndex}-${i}` });
+    currentX += 130 + Math.floor(prng() * 120); // spacing
+    
+    if (currentX + pWidth < startX + 960) {
+      objects.push({
+        type: 'platform',
+        x: currentX,
+        y: pY,
+        width: pWidth,
+        height: 24, // sturdy brick height
+        id: `platform-${chunkIndex}-${p}`
+      });
+      platformPositions.push({ x: currentX, y: pY, w: pWidth });
+      currentX += pWidth;
     }
   }
-  
+
+  // Segment the 1000px chunk into regular horizontal slots
+  // We place at most ONE obstacle or helper per slot, guaranteeing logical placement
+  const slotWidth = 130;
+  const maxSlots = Math.floor(1000 / slotWidth) - 1;
+
+  for (let s = 1; s < maxSlots; s++) {
+    const itemX = startX + s * slotWidth + Math.floor(prng() * 20);
+    
+    // Check if there is a platform at this X position to rest on
+    const platform = platformPositions.find(p => itemX >= p.x && itemX <= p.x + p.w - 30);
+    
+    const rand = prng();
+    
+    if (platform) {
+      // Items on top of floating platforms:
+      if (rand < 0.55) {
+        // High coins
+        objects.push({ type: 'coin', x: itemX, y: platform.y - 30, width: 20, height: 20, id: `coin-plat-${chunkIndex}-${s}` });
+      } else if (rand < 0.72) {
+        // Carrot speedboost helper
+        objects.push({ type: 'carrot', x: itemX, y: platform.y - 30, width: 24, height: 24, id: `carrot-plat-${chunkIndex}-${s}` });
+      } else if (rand < 0.85) {
+        // Health apple
+        objects.push({ type: 'health', x: itemX, y: platform.y - 30, width: 28, height: 28, id: `hp-plat-${chunkIndex}-${s}` });
+      } else if (rand < 0.95 && difficulty > 0.25) {
+        // Cactus obstacle on platform (high difficulty obstacle)
+        objects.push({ type: 'obstacle', x: itemX, y: platform.y - 36, width: 36, height: 36, id: `cactus-plat-${chunkIndex}-${s}` });
+      }
+    } else {
+      // Items on the ground or floating high in the open sky
+      if (rand < 0.45) {
+        // Coins floating at jump trajectory height
+        objects.push({ type: 'coin', x: itemX, y: 440, width: 20, height: 20, id: `coin-ground-${chunkIndex}-${s}` });
+      } else if (rand < 0.62) {
+        // Ground Cactus (obstacle)
+        if (chunkIndex > 0 || itemX > 600) {
+          objects.push({ type: 'obstacle', x: itemX, y: 460, width: 40, height: 40, id: `cactus-ground-${chunkIndex}-${s}` });
+        }
+      } else if (rand < 0.78) {
+        // Puddles (slow down for 5s)
+        if (chunkIndex > 0) {
+          objects.push({ type: 'slow', x: itemX, y: 485, width: 90, height: 15, id: `puddle-ground-${chunkIndex}-${s}` });
+        }
+      } else if (rand < 0.90) {
+        // Birds flying high in sky (to jump/duck under)
+        if (difficulty > 0.15) {
+          const birdY = 180 + Math.floor(prng() * 90); // Flies at 180 - 270 altitude
+          objects.push({ type: 'obstacle', x: itemX, y: birdY, width: 40, height: 30, id: `bird-sky-${chunkIndex}-${s}` });
+        }
+      } else {
+        // Ground apple (health)
+        objects.push({ type: 'health', x: itemX, y: 450, width: 30, height: 30, id: `hp-ground-${chunkIndex}-${s}` });
+      }
+    }
+  }
+
   return objects;
 }
