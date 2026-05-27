@@ -43,12 +43,12 @@ const PixelParrot = ({ type }: { type: CharacterType }) => {
 }
 
 export function Home() {
-  const [localUsername, setLocalUsername] = useState('');
-  const [selectedChar, setSelectedChar] = useState<CharacterType>('Кеша');
+  const { userId, username, character, setUserId, setUsername, setCharacter } = useGameStore();
+  const [localUsername, setLocalUsername] = useState(username || 'NAMELESS');
+  const [selectedChar, setSelectedChar] = useState<CharacterType>(character);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
-  const { setUserId, setUsername, setCharacter, userId } = useGameStore();
 
   const searchParams = new URLSearchParams(window.location.search);
   const joinParam = searchParams.get('join');
@@ -63,11 +63,19 @@ export function Home() {
           if (data.username) {
              setLocalUsername(data.username);
              setUsername(data.username);
+          } else {
+             const defaultName = username || 'NAMELESS';
+             setLocalUsername(defaultName);
+             setUsername(defaultName);
           }
+        } else {
+          const defaultName = username || 'NAMELESS';
+          setLocalUsername(defaultName);
+          setUsername(defaultName);
         }
     };
     fetchUser();
-  }, [setUserId, setUsername]);
+  }, [setUserId, setUsername, username]);
 
   const handleStart = async (e: FormEvent) => {
     e.preventDefault();

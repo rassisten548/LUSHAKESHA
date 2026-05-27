@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useGameStore, CharacterType } from '../store';
-import { db } from '../lib/firebase';
+import { db, generateLocalUserId } from '../lib/firebase';
 import { doc, setDoc, getDoc, collection, onSnapshot, updateDoc } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { Coins, Zap, Heart, Orbit, ArrowUp, ArrowLeft, ArrowRight } from 'lucide-react';
@@ -100,6 +100,43 @@ export function Game() {
   const [localDead, setLocalDead] = useState(false);
   const [localStarted, setLocalStarted] = useState(false);
 
+  // Invite link copying state helpers
+  const [copied, setCopied] = useState(false);
+  const handleCopyLink = () => {
+      const inviteUrl = window.location.origin + `/#/game/${gameId}`;
+      navigator.clipboard.writeText(inviteUrl).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+      }).catch(err => {
+          console.error('Failed to copy link:', err);
+      });
+  };
+
+  // Mobile customizable preferences saved in localStorage
+  const [controlPosition, setControlPosition] = useState<'fullscreen' | 'left' | 'right'>(() => {
+      return (localStorage.getItem('parrot_pref_pos') as any) || 'fullscreen';
+  });
+  const [controlSize, setControlSize] = useState<'medium' | 'large' | 'giant'>(() => {
+      return (localStorage.getItem('parrot_pref_size') as any) || 'medium';
+  });
+  const [controlOpacity, setControlOpacity] = useState<'low' | 'medium' | 'high'>(() => {
+      return (localStorage.getItem('parrot_pref_opacity') as any) || 'medium';
+  });
+  const [showMobileSettings, setShowMobileSettings] = useState(false);
+
+  // Save changes to localStorage on adjustments
+  useEffect(() => {
+      localStorage.setItem('parrot_pref_pos', controlPosition);
+  }, [controlPosition]);
+
+  useEffect(() => {
+      localStorage.setItem('parrot_pref_size', controlSize);
+  }, [controlSize]);
+
+  useEffect(() => {
+      localStorage.setItem('parrot_pref_opacity', controlOpacity);
+  }, [controlOpacity]);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(0);
   const lastSyncRef = useRef<number>(0);
@@ -117,12 +154,19 @@ export function Game() {
   // Input states
   const keys = useRef({ left: false, right: false, up: false });
 
-  // Network Sync Setup
+  // Network Sync Setup - Handles direct access, setting NAMELESS as first fallback name
   useEffect(() => {
-    if (!userId || !gameId) { 
-        navigate(`/?join=${gameId || ''}`); 
-        return; 
+    if (!gameId) { navigate('/'); return; }
+
+    const activeUserId = userId || generateLocalUserId();
+    if (!userId) {
+        useGameStore.getState().setUserId(activeUserId);
     }
+    const activeUsername = username || 'NAMELESS';
+    if (!username) {
+        useGameStore.getState().setUsername(activeUsername);
+    }
+    const activeCharacter = character || 'Кеша';
 
     const initGame = async () => {
       const gRef = doc(db, 'games', gameId);
@@ -130,20 +174,25 @@ export function Game() {
       if (!gSnap.exists()) { navigate('/'); return; }
       
       const gData = gSnap.data();
-      if (gData.hostId === userId) setIsHost(true);
+      const hostIsUser = gData.hostId === activeUserId;
+      setIsHost(hostIsUser);
       setGameState(gData.status);
       gameStateRef.current = gData.status;
       seedRef.current = gData.seed || 12345;
 
       try {
-          const pRef = doc(db, 'games', gameId, 'players', userId);
+          const pRef = doc(db, 'games', gameId, 'players', activeUserId);
           const pSnap = await getDoc(pRef);
           if (!pSnap.exists()) {
              await setDoc(pRef, {
-               userId, username, character,
+               userId: activeUserId, 
+               username: activeUsername, 
+               character: activeCharacter,
                x: 100, y: 300, hp: 3, coins: 0, isDead: false, updatedAt: Date.now()
              });
           } else {
+             const existingUsername = pSnap.data()?.username || activeUsername;
+             useGameStore.getState().setUsername(existingUsername);
              await updateDoc(pRef, {
                 x: 100, y: 300, hp: 3, isDead: false, updatedAt: Date.now()
              });
@@ -171,16 +220,25 @@ export function Game() {
       snapshot.forEach(d => {
           hasPlayers = true;
           const data = d.data() as PlayerNetworkState;
-          if (data.userId !== userId) { // Don't override local predictable state
+          if (data.userId !== activeUserId) { // Don't override local predictable state
               pData[data.userId] = data;
           }
           if (!data.isDead) allDead = false;
       });
       setPlayers(pData);
 
-      if (hasPlayers && allDead && isHost && gameStateRef.current === 'playing') {
-         updateDoc(doc(db, 'games', gameId), { status: 'finished' }).catch(console.error);
-      }
+      // Check if host status demands finishing game status
+      const checkFinish = async () => {
+         const gRef = doc(db, 'games', gameId);
+         const gSnap = await getDoc(gRef);
+         if (gSnap.exists()) {
+             const gData = gSnap.data();
+             if (hasPlayers && allDead && gData.hostId === activeUserId && gameStateRef.current === 'playing') {
+                 await updateDoc(gRef, { status: 'finished' });
+             }
+         }
+      };
+      checkFinish().catch(console.error);
     });
 
     return () => {
@@ -188,7 +246,7 @@ export function Game() {
         unsubPlayers();
         cancelAnimationFrame(requestRef.current);
     }
-  }, [userId, gameId, navigate, username, character, isHost]);
+  }, [userId, username, character, gameId, navigate]);
 
   const startGame = async () => {
       if (isHost && gameId) {
@@ -515,47 +573,193 @@ export function Game() {
     <div className="w-full h-full relative bg-sky-900 overflow-hidden">
         {loading && <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white z-50">Loading...</div>}
         
-        {/* Debug UI */}
+        {/* Debug / Score UI */}
         <div className="absolute top-4 left-4 z-10 flex gap-6 text-white font-mono bg-black/80 px-4 py-2 border-4 border-black pointer-events-none">
             <div className="flex items-center gap-2 text-2xl uppercase"><Heart className="text-red-500 fill-red-500" size={24}/> {localHp}</div>
             <div className="flex items-center gap-2 text-2xl uppercase text-yellow-400"><Coins className="fill-yellow-400" size={24}/> {localCoins}</div>
         </div>
 
+        {/* Floating Mobile Controls Customizer Button */}
+        <div className="absolute top-4 right-4 z-40 select-none">
+            <button 
+                onClick={() => setShowMobileSettings(!showMobileSettings)} 
+                className="bg-yellow-400 hover:bg-yellow-300 text-black border-4 border-black p-3 shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-[0_0_0_0] uppercase font-bold tracking-widest text-lg flex items-center gap-2 cursor-pointer"
+            >
+                ⚙️ CONTROLS
+            </button>
+        </div>
+
+        {/* Mobile Settings Modal Overlay */}
+        {showMobileSettings && (
+            <div className="absolute inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+                <div className="bg-white border-4 border-black text-black p-6 w-full max-w-md shadow-[8px_8px_0_0_#000] font-mono relative">
+                    <h3 className="text-3xl font-bold uppercase tracking-widest border-b-4 border-black pb-3 mb-4 flex justify-between items-center">
+                        <span>⚙️ CONTROLS</span>
+                        <button onClick={() => setShowMobileSettings(false)} className="text-red-600 font-bold hover:scale-110 active:scale-90 text-2xl px-2">X</button>
+                    </h3>
+                    
+                    <div className="space-y-6">
+                        {/* 1. BUTTON PLACE */}
+                        <div>
+                            <span className="block text-base font-bold uppercase mb-2 text-slate-700">📌 BUTTON POSITION</span>
+                            <div className="grid grid-cols-3 gap-2">
+                                {(['fullscreen', 'left', 'right'] as const).map((pos) => (
+                                    <button
+                                        key={pos}
+                                        type="button"
+                                        onClick={() => setControlPosition(pos)}
+                                        className={cn(
+                                            "border-2 border-black p-2 text-xs font-bold uppercase tracking-tight cursor-pointer",
+                                            controlPosition === pos ? "bg-sky-400 text-black shadow-[2px_2px_0_0_#000]" : "bg-slate-100 text-slate-500"
+                                        )}
+                                    >
+                                        {pos}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* 2. BUTTON SIZE */}
+                        <div>
+                            <span className="block text-base font-bold uppercase mb-2 text-slate-700">📏 TOUCH BUTTON SIZE</span>
+                            <div className="grid grid-cols-3 gap-2">
+                                {(['medium', 'large', 'giant'] as const).map((size) => (
+                                    <button
+                                        key={size}
+                                        type="button"
+                                        onClick={() => setControlSize(size)}
+                                        className={cn(
+                                            "border-2 border-black p-2 text-xs font-bold uppercase tracking-tight cursor-pointer",
+                                            controlSize === size ? "bg-amber-400 text-black shadow-[2px_2px_0_0_#000]" : "bg-slate-100 text-slate-500"
+                                        )}
+                                    >
+                                        {size}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* 3. OPACITY */}
+                        <div>
+                            <span className="block text-base font-bold uppercase mb-2 text-slate-700">🔅 BUTTON OPACITY</span>
+                            <div className="grid grid-cols-3 gap-2">
+                                {(['low', 'medium', 'high'] as const).map((op) => (
+                                    <button
+                                        key={op}
+                                        type="button"
+                                        onClick={() => setControlOpacity(op)}
+                                        className={cn(
+                                            "border-2 border-black p-2 text-xs font-bold uppercase tracking-tight cursor-pointer",
+                                            controlOpacity === op ? "bg-lime-400 text-black shadow-[2px_2px_0_0_#000]" : "bg-slate-100 text-slate-500"
+                                        )}
+                                    >
+                                        {op === 'low' ? '30%' : op === 'medium' ? '65%' : '95%'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <button 
+                        type="button"
+                        onClick={() => setShowMobileSettings(false)} 
+                        className="mt-6 w-full bg-green-400 hover:bg-green-300 border-4 border-black text-black py-3 font-bold text-xl uppercase shadow-[4px_4px_0_0_#000] cursor-pointer"
+                    >
+                        ✓ APPLY PREFERENCES
+                    </button>
+                </div>
+            </div>
+        )}
+
         {gameState === 'waiting' && !loading && (
              <div className="absolute inset-0 flex flex-col items-center justify-center bg-sky-400 z-20 p-4" style={{ backgroundImage: 'radial-gradient(#38bdf8 20%, transparent 20%)', backgroundSize: '20px 20px' }}>
-                <div className="bg-white pixel-box p-8 w-[90%] max-w-4xl flex flex-col items-center relative z-10 before:absolute before:inset-0 before:bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPgo8cmVjdCB3aWR0aD0iOCIgaGVpZ2h0PSI4IiBmaWxsPSIjZmZmIj48L3JlY3Q+CjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiNmM2Y0ZjYiPjwvcmVjdD4KPHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjQiIGhlaWdodD0iNCIgZmlsbD0iI2YzZjRmNiI+PC9yZWN0Pgo8L3N2Zz4=')] before:opacity-50 before:pointer-events-none overflow-hidden">
-                    <h1 className="text-6xl font-bold mb-2 uppercase text-black text-center tracking-widest relative z-10">Room: <span className="text-white drop-shadow-[4px_4px_0_#2563eb]">{gameId}</span></h1>
-                    <h2 className="text-2xl mb-10 text-slate-500 uppercase text-center relative z-10 tracking-widest font-bold">Waiting for players to join...</h2>
+                <div className="bg-white pixel-box p-8 w-[95%] max-w-4xl flex flex-col items-center relative z-10 before:absolute before:inset-0 before:bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPgo8cmVjdCB3aWR0aD0iOCIgaGVpZ2h0PSI4IiBmaWxsPSIjZmZmIj48L3JlY3Q+CjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiNmM2Y0ZjYiPjwvcmVjdD4KPHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjQiIGhlaWdodD0iNCIgZmlsbD0iI2YzZjRmNiI+PC9yZWN0Pgo8L3N2Zz4=')] before:opacity-50 before:pointer-events-none overflow-y-auto max-h-full">
                     
-                    <div className="flex flex-wrap justify-center gap-6 mb-12 w-full relative z-10">
-                        {/* Local player */}
-                        <div className="flex flex-col items-center bg-slate-100 p-4 pixel-box hover:-translate-y-2 hover:shadow-[10px_10px_0_0_#000] transition-all w-48">
-                            <div className={cn("w-24 h-24 border-4 border-black mb-4 relative overflow-hidden", character === 'Кеша' ? "bg-sky-400" : "bg-lime-400")}>
-                                <div className="absolute inset-0 bg-black/10"></div>
-                            </div>
-                            <span className="text-3xl font-bold uppercase text-black text-center leading-none truncate w-full px-2" title={username}>{username}</span>
-                            <span className="text-blue-600 text-xl font-bold mt-2 bg-blue-100 px-3 py-1 border-2 border-blue-600 rounded-full leading-none">You</span>
+                    <h1 className="text-4xl md:text-5xl font-bold mb-1 uppercase text-black text-center tracking-widest relative z-10">Room Status</h1>
+                    
+                    {/* Shareable Invite parameters display */}
+                    <div className="mb-8 flex flex-col items-center gap-1.5 bg-slate-50 border-4 border-dashed border-slate-300 p-4 w-full max-w-xl relative z-10">
+                        <span className="text-slate-600 font-bold uppercase tracking-wider text-xs">🔗 QUICK JOIN LINK (SHARE TO FRIENDS)</span>
+                        <div className="flex gap-2 w-full">
+                            <input 
+                                readOnly 
+                                value={window.location.origin + `/#/game/${gameId}`} 
+                                className="bg-slate-200 border-2 border-black p-2 font-mono text-xs text-slate-700 flex-1 truncate select-all"
+                            />
+                            <button 
+                                onClick={handleCopyLink}
+                                className={cn("px-4 py-2 border-2 border-black font-bold uppercase text-xs select-none transition-all active:translate-y-0.5", copied ? "bg-green-400" : "bg-yellow-400 hover:bg-yellow-300")}
+                            >
+                                {copied ? 'COPIED!' : 'COPY'}
+                            </button>
                         </div>
+                    </div>
+                    
+                    <div className="flex flex-wrap justify-center gap-5 mb-8 w-full relative z-10">
+                        {/* Interactive Local Player Card (Customize nickname/bird inside room) */}
+                        <div className="flex flex-col items-center bg-slate-100 p-4 pixel-box hover:shadow-[10px_10px_0_0_#3b82f6] transition-all w-52 border-4 border-blue-500 relative">
+                            <span className="text-blue-600 text-xs font-black uppercase tracking-widest bg-blue-100 px-3 py-0.5 border-2 border-blue-600 rounded-full mb-3 select-none">YOU</span>
+                            
+                            <button 
+                                type="button"
+                                onClick={async () => {
+                                    const nextChar = character === 'Кеша' ? 'Луша' : 'Кеша';
+                                    useGameStore.getState().setCharacter(nextChar);
+                                    if (gameId && userId) {
+                                        await updateDoc(doc(db, 'games', gameId, 'players', userId), {
+                                            character: nextChar
+                                        });
+                                    }
+                                }}
+                                title="Click to switch character Kesha / Lusha"
+                                className={cn("w-24 h-24 border-4 border-black mb-3 relative overflow-hidden group cursor-pointer active:scale-95 transition-transform", character === 'Кеша' ? "bg-sky-400 animate-pulse" : "bg-lime-400 animate-pulse")}
+                            >
+                                <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[10px] uppercase font-bold text-white tracking-widest py-1 select-none">SWAP BIRD</div>
+                            </button>
+                            
+                            {/* Editable Nickname Input in real-time */}
+                            <input
+                                type="text"
+                                maxLength={12}
+                                value={username || ''}
+                                onChange={async (e) => {
+                                    const newName = e.target.value.toUpperCase();
+                                    useGameStore.getState().setUsername(newName);
+                                    if (gameId && userId) {
+                                        await updateDoc(doc(db, 'games', gameId, 'players', userId), {
+                                            username: newName
+                                        });
+                                    }
+                                }}
+                                className="w-full text-center text-lg font-extrabold uppercase text-black bg-white border-2 border-dashed border-slate-400 px-1 py-1 font-mono focus:outline-none focus:border-blue-500 mb-1"
+                                placeholder="NAMELESS"
+                            />
+                            
+                            <span className="text-slate-500 text-[10px] uppercase tracking-wider font-bold">Touch name to rewrite</span>
+                        </div>
+
+                        {/* Other Remote Players */}
                         {Object.values(players).map((p: PlayerNetworkState) => (
-                            <div key={p.userId} className="flex flex-col items-center bg-slate-100 p-4 pixel-box hover:-translate-y-2 hover:shadow-[10px_10px_0_0_#000] transition-all w-48">
-                                <div className={cn("w-24 h-24 border-4 border-black mb-4 relative overflow-hidden", p.character === 'Кеша' ? "bg-sky-400" : "bg-lime-400")}>
+                            <div key={p.userId} className="flex flex-col items-center bg-slate-100 p-4 pixel-box hover:-translate-y-1 hover:shadow-[10px_10px_0_0_#10b981] transition-all w-52">
+                                <span className="text-emerald-600 text-xs font-black uppercase tracking-widest bg-emerald-100 px-3 py-0.5 border-2 border-emerald-600 rounded-full mb-3">FRIEND</span>
+                                <div className={cn("w-24 h-24 border-4 border-black mb-3 relative overflow-hidden", p.character === 'Кеша' ? "bg-sky-400" : "bg-lime-400")}>
                                     <div className="absolute inset-0 bg-black/10"></div>
                                 </div>
-                                <span className="text-3xl font-bold uppercase text-black text-center leading-none truncate w-full px-2" title={p.username}>{p.username}</span>
-                                <span className="text-slate-500 text-xl font-bold mt-2 bg-slate-200 px-3 py-1 border-2 border-slate-400 rounded-full leading-none">Player</span>
+                                <span className="text-xl font-black uppercase text-black text-center truncate w-full px-2" title={p.username}>{p.username}</span>
                             </div>
                         ))}
                     </div>
+
                     {isHost ? (
-                        <button onClick={startGame} className="bg-lime-400 hover:bg-lime-300 w-full max-w-sm px-8 py-6 pixel-box font-bold text-4xl uppercase tracking-widest text-black relative z-10 group overflow-hidden hover:scale-105 transition-transform active:scale-95">
-                            <span className="relative z-10 flex items-center justify-center gap-3">START <ArrowRight size={36} className="group-hover:translate-x-2 transition-transform stroke-[3px]"/></span>
+                        <button onClick={startGame} className="bg-lime-400 hover:bg-lime-300 w-full max-w-sm px-8 py-5 pixel-box font-black text-3xl uppercase tracking-widest text-black relative z-10 group overflow-hidden hover:scale-105 transition-transform active:scale-95 cursor-pointer">
+                            <span className="relative z-10 flex items-center justify-center gap-3">START GAME <ArrowRight size={32} className="group-hover:translate-x-2 transition-transform stroke-[3px]"/></span>
                         </button>
                     ) : (
-                        <div className="bg-amber-200 p-6 pixel-box w-full max-w-sm text-center relative z-10">
-                            <p className="text-black text-3xl font-bold uppercase flex items-center justify-center gap-3">
-                                <span className="w-5 h-5 bg-black rounded-full animate-bounce" style={{animationDelay: '0ms'}}></span>
-                                Waiting
-                                <span className="w-5 h-5 bg-black rounded-full animate-bounce" style={{animationDelay: '150ms'}}></span>
+                        <div className="bg-amber-200 p-5 pixel-box w-full max-w-sm text-center relative z-10">
+                            <p className="text-black text-2xl font-black uppercase flex items-center justify-center gap-3">
+                                <span className="w-4 h-4 bg-black rounded-full animate-bounce" style={{animationDelay: '0ms'}}></span>
+                                Waiting for Host
+                                <span className="w-4 h-4 bg-black rounded-full animate-bounce" style={{animationDelay: '150ms'}}></span>
                             </p>
                         </div>
                     )}
@@ -564,62 +768,88 @@ export function Game() {
         )}
 
         {gameState === 'playing' && !localStarted && !localDead && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 cursor-pointer backdrop-blur-sm" onClick={handleStart}>
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/65 cursor-pointer backdrop-blur-sm" onClick={handleStart}>
                 <div className="border-4 border-black bg-white shadow-[8px_8px_0_0_#000] p-8 text-center animate-bounce">
-                    <h2 className="text-6xl text-black font-bold uppercase mb-4 tracking-widest px-8">Run!</h2>
-                    <p className="text-2xl font-mono text-slate-600 uppercase">Tap to start running</p>
+                    <h2 className="text-5xl text-black font-bold uppercase mb-4 tracking-widest px-8">Run!</h2>
+                    <p className="text-xl font-mono text-slate-600 uppercase">Tap anywhere to run</p>
                 </div>
             </div>
         )}
 
         {localDead && gameState === 'playing' && (
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/80 text-white p-8 border-4 border-black z-30 flex flex-col items-center text-center shadow-[8px_8px_0_0_#000]">
-                <h2 className="text-5xl font-bold text-red-500 mb-2 uppercase">You Died!</h2>
-                <p className="text-xl uppercase">Spectating remaining players...</p>
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/85 text-white p-8 border-4 border-black z-30 flex flex-col items-center text-center shadow-[8px_8px_0_0_#000] font-mono">
+                <h2 className="text-4xl font-bold text-red-500 mb-2 uppercase">You Died!</h2>
+                <p className="text-lg uppercase">Spectating remaining players...</p>
             </div>
         )}
 
         {gameState === 'finished' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 z-40 text-white">
-                <h1 className="text-7xl font-bold mb-6 text-red-500 uppercase text-shadow-md">Game Over</h1>
-                <p className="text-3xl mb-8 border-b-4 border-slate-700 pb-8 px-12 uppercase font-mono tracking-widest text-slate-300">All players have perished</p>
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 z-40 text-white font-mono">
+                <h1 className="text-6xl font-black mb-4 text-red-500 uppercase tracking-wider">Game Over</h1>
+                <p className="text-2xl mb-8 border-b-4 border-slate-700 pb-6 px-12 uppercase tracking-widest text-slate-300">All players have perished</p>
                 <div className="flex gap-2 mt-4">
-                     <button onClick={() => navigate('/lobby')} className="bg-sky-400 hover:bg-sky-300 text-black px-8 py-4 pixel-box font-bold text-3xl uppercase">Return to Lobby</button>
+                     <button onClick={() => navigate('/lobby')} className="bg-sky-400 hover:bg-sky-300 text-black px-8 py-4 border-4 border-black font-black text-2xl uppercase shadow-[4px_4px_0_0_#000] active:translate-y-0.5 cursor-pointer">Return to Lobby</button>
                 </div>
             </div>
         )}
 
         {gameState === 'playing' && !localDead && (
-            <div className="absolute top-20 left-4 z-40 flex flex-col gap-3">
-                <button onClick={buySpeed} className="w-48 bg-sky-200 hover:bg-sky-300 px-3 py-2 border-4 border-black shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-[0_0_0_0] flex items-center justify-between group">
-                    <span className="font-bold text-lg uppercase flex items-center gap-1"><Zap className="text-blue-600 fill-blue-500" size={18} /> SPEED</span>
-                    <span className="font-bold text-lg text-black flex items-center gap-1">10 <Coins className="text-yellow-600 fill-yellow-400" size={12}/></span>
+            <div className="absolute top-20 left-4 z-40 flex flex-col gap-3 select-none">
+                <button onClick={buySpeed} className="w-48 bg-sky-200 hover:bg-sky-300 px-3 py-2 border-4 border-black shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-[0_0_0_0] flex items-center justify-between group cursor-pointer">
+                    <span className="font-bold text-base uppercase flex items-center gap-1"><Zap className="text-blue-600 fill-blue-500" size={16} /> SPEED</span>
+                    <span className="font-bold text-base text-black flex items-center gap-1">10 <Coins className="text-yellow-600 fill-yellow-400" size={12}/></span>
                 </button>
-                <button onClick={buyTeleport} className="w-48 bg-purple-200 hover:bg-purple-300 px-3 py-2 border-4 border-black shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-[0_0_0_0] flex items-center justify-between group">
-                    <span className="font-bold text-lg uppercase flex items-center gap-1"><Orbit className="text-purple-600 fill-purple-500" size={18} /> RNDMZR</span>
-                    <span className="font-bold text-lg text-black flex items-center gap-1">20 <Coins className="text-yellow-600 fill-yellow-400" size={12}/></span>
+                <button onClick={buyTeleport} className="w-48 bg-purple-200 hover:bg-purple-300 px-3 py-2 border-4 border-black shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-[0_0_0_0] flex items-center justify-between group cursor-pointer">
+                    <span className="font-bold text-base uppercase flex items-center gap-1"><Orbit className="text-purple-600 fill-purple-500" size={16} /> RNDMZR</span>
+                    <span className="font-bold text-base text-black flex items-center gap-1">20 <Coins className="text-yellow-600 fill-yellow-400" size={12}/></span>
                 </button>
             </div>
         )}
 
-        {/* Mobile Controls */}
+        {/* Global/Customized Mobile Jump Control Action */}
         {gameState === 'playing' && localStarted && !localDead && (
-            <div className="absolute inset-0 z-20 md:hidden pointer-events-none touch-none">
-                {/* Full screen tap to jump excluding top area where shop buttons are */}
-                <button 
-                    onPointerDown={(e)=>{e.preventDefault(); hDown('up')}} onPointerUp={(e)=>{e.preventDefault(); hUp('up')}} onPointerLeave={() => hUp('up')}
-                    className="absolute inset-x-0 bottom-0 top-32 w-full outline-none pointer-events-auto"
-                ></button>
-                {/* Visual hint for jump */}
-                <div className="absolute bottom-6 right-6 pointer-events-none opacity-50 bg-white border-4 border-black p-4 shadow-[4px_4px_0_0_#000] rotate-12">
-                    <span className="text-2xl font-bold uppercase tracking-widest flex items-center gap-2 text-black"><ArrowUp size={32} className="fill-black"/> JUMP</span>
-                </div>
-            </div>
+            <>
+                {/* 1. Fullscreen Tap Target */}
+                {controlPosition === 'fullscreen' && (
+                    <div className="absolute inset-0 z-20 pointer-events-none touch-none">
+                        <button 
+                            onPointerDown={(e)=>{e.preventDefault(); hDown('up')}} onPointerUp={(e)=>{e.preventDefault(); hUp('up')}} onPointerLeave={() => hUp('up')}
+                            className="absolute inset-x-0 bottom-0 top-32 w-full outline-none pointer-events-auto bg-transparent border-none cursor-pointer"
+                        />
+                        <div 
+                            className={cn(
+                                "absolute bottom-6 right-6 pointer-events-none bg-white border-4 border-black p-4 shadow-[4px_4px_0_0_#000] rotate-12 transition-all",
+                                controlOpacity === 'low' ? "opacity-25" : controlOpacity === 'medium' ? "opacity-60" : "opacity-90"
+                            )}
+                        >
+                            <span className="text-2xl font-bold uppercase tracking-widest flex items-center gap-2 text-black"><ArrowUp size={32} className="fill-black"/> JUMP</span>
+                        </div>
+                    </div>
+                )}
+
+                {/* 2. Positioned Custom Circle Touch Target */}
+                {controlPosition !== 'fullscreen' && (
+                    <div className="absolute inset-x-0 bottom-0 top-32 z-20 pointer-events-none select-none">
+                        <button 
+                            onPointerDown={(e)=>{e.preventDefault(); hDown('up')}} onPointerUp={(e)=>{e.preventDefault(); hUp('up')}} onPointerLeave={() => hUp('up')}
+                            className={cn(
+                                "absolute border-8 border-black rounded-full bg-rose-500 text-white font-black uppercase tracking-wider flex flex-col items-center justify-center shadow-[6px_6px_0_0_#000] active:translate-y-1 active:shadow-[2px_2px_0_0_#000] transition-all pointer-events-auto cursor-pointer",
+                                controlPosition === 'left' ? "bottom-6 left-6" : "bottom-6 right-6",
+                                controlSize === 'medium' ? "w-24 h-24 text-sm" : controlSize === 'large' ? "w-32 h-32 text-xl" : "w-40 h-40 text-2xl",
+                                controlOpacity === 'low' ? "opacity-30" : controlOpacity === 'medium' ? "opacity-65" : "opacity-95"
+                            )}
+                        >
+                            <ArrowUp size={controlSize === 'medium' ? 24 : controlSize === 'large' ? 36 : 48} className="fill-white" />
+                            <span>JUMP</span>
+                        </button>
+                    </div>
+                )}
+            </>
         )}
 
         <canvas 
             ref={canvasRef} 
-            className="w-full h-full block"
+            className="w-full h-full block font-bold"
         />
     </div>
   );

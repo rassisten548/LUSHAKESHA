@@ -1,6 +1,8 @@
 {
-  "name": "",
-  "description": "",
+  "name": "Parrot Run",
+  "description": "An exciting real-time multiplayer endless runner game where players fly as custom pixel-art parrots, dodge obstacles, and collect coins together!",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
