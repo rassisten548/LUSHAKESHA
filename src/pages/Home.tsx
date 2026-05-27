@@ -167,7 +167,7 @@ export function Home() {
                   )}
                 >
                   <PixelParrot type={bird.id} />
-                  <span className="text-base font-bold uppercase tracking-tight">{bird.name}</span>
+                  <span className="text-base font-black uppercase tracking-tight text-black">{bird.name}</span>
                 </button>
               ))}
             </div>

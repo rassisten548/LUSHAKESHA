@@ -128,30 +128,64 @@ interface PlayerNetworkState {
 }
 
 // --- Sound Synthesis Helpers ---
+let sharedAudioCtx: AudioContext | null = null;
+const getAudioContext = (): AudioContext => {
+    if (!sharedAudioCtx) {
+        sharedAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    if (sharedAudioCtx.state === 'suspended') {
+        sharedAudioCtx.resume().catch(() => {});
+    }
+    return sharedAudioCtx;
+};
+
 const playChirpSound = () => {
     try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
+        const audioCtx = getAudioContext();
         
-        osc.type = 'triangle';
+        // A real parrot in distress makes a rapid, dual-tone screeched high-pitched "chirp-chirp!"
+        // Sweet rapid chirp-up oscillation 1
+        const osc1 = audioCtx.createOscillator();
+        const gain1 = audioCtx.createGain();
+        osc1.connect(gain1);
+        gain1.connect(audioCtx.destination);
+        osc1.type = 'sine';
         const now = audioCtx.currentTime;
-        osc.frequency.setValueAtTime(600, now);
-        osc.frequency.exponentialRampToValueAtTime(150, now + 0.4);
+        osc1.frequency.setValueAtTime(900, now);
+        osc1.frequency.exponentialRampToValueAtTime(1600, now + 0.12);
         
-        gain.gain.setValueAtTime(0.3, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.45);
+        gain1.gain.setValueAtTime(0.25, now);
+        gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
         
-        osc.start(now);
-        osc.stop(now + 0.45);
+        osc1.start(now);
+        osc1.stop(now + 0.15);
+
+        // Second distress chirp for highly convincing bird plaintive feeling as requested!
+        setTimeout(() => {
+            try {
+                const audioCtxInner = getAudioContext();
+                const osc2 = audioCtxInner.createOscillator();
+                const gain2 = audioCtxInner.createGain();
+                osc2.connect(gain2);
+                gain2.connect(audioCtxInner.destination);
+                osc2.type = 'sine';
+                const now2 = audioCtxInner.currentTime;
+                osc2.frequency.setValueAtTime(1100, now2);
+                osc2.frequency.exponentialRampToValueAtTime(2000, now2 + 0.1);
+                
+                gain2.gain.setValueAtTime(0.20, now2);
+                gain2.gain.exponentialRampToValueAtTime(0.01, now2 + 0.12);
+                
+                osc2.start(now2);
+                osc2.stop(now2 + 0.12);
+            } catch (e) {}
+        }, 70);
     } catch (e) {}
 };
 
 const playCoinSound = () => {
     try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const audioCtx = getAudioContext();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.connect(gain);
@@ -172,7 +206,7 @@ const playCoinSound = () => {
 
 const playPowerupSound = () => {
     try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const audioCtx = getAudioContext();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.connect(gain);
@@ -322,19 +356,11 @@ export function Game() {
               }
               setHasJoinedRoom(true);
           } else {
-              // Guest players
-              if (pSnap.exists()) {
-                 // Already registered in this room
-                 const pData = pSnap.data();
-                 useGameStore.getState().setUsername(pData.username || activeUsername);
-                 useGameStore.getState().setCharacter(pData.character || activeCharacter);
-                 setHasJoinedRoom(true);
-              } else {
-                 // New guest joiner - force them to choose a name and bird selection first!
-                 setGuestName(activeUsername === 'NAMELESS' ? '' : activeUsername);
-                 setGuestBird(activeCharacter);
-                 setHasJoinedRoom(false);
-              }
+              // Guest players entering via a link must ALWAYS enter a name and choose a character first!
+              // This guarantees they are never automatically joined or bypassed without explicit onboarding input.
+              setGuestName(activeUsername === 'NAMELESS' ? '' : activeUsername);
+              setGuestBird(activeCharacter);
+              setHasJoinedRoom(false);
           }
       } catch (e) {
           console.error(e);
@@ -498,12 +524,15 @@ export function Game() {
                     if (obj.type === 'platform') {
                         // Check horizontal intersection boundaries
                         const isXIntersect = phys.x + 32 > obj.x && phys.x + 8 < obj.x + obj.width;
-                        // Was previous bottom above top of platform?
-                        const isAboveBefore = (phys.y + 40 - phys.vy) <= obj.y + 6;
-                        // Is current bottom past top layer of platform?
-                        const isAtSurfaceNow = (phys.y + 40) >= obj.y && (phys.y + 40) <= obj.y + 15;
+                        
+                        const prevBottom = phys.y + 40 - phys.vy;
+                        const currBottom = phys.y + 40;
+                        
+                        // We land if feet crossed the platform top while descending
+                        const isAboveBefore = prevBottom <= obj.y + 8;
+                        const crossedOrOnPlatform = currBottom >= obj.y;
 
-                        if (isXIntersect && isAboveBefore && isAtSurfaceNow && phys.vy >= 0) {
+                        if (isXIntersect && isAboveBefore && crossedOrOnPlatform && phys.vy >= 0) {
                             phys.y = obj.y - 40;
                             phys.vy = 0;
                             onPlatform = true;
@@ -817,7 +846,7 @@ export function Game() {
       if (!physicsRef.current.started) handleStart();
 
       keys.current[dir] = true; 
-      if(dir==='up' && physicsRef.current.y >= GROUND_Y - 40) physicsRef.current.vy = JUMP_FORCE; 
+      if(dir==='up' && physicsRef.current.onPlatform) physicsRef.current.vy = JUMP_FORCE; 
   }
   const hUp = (dir: 'up') => { keys.current[dir] = false; }
 
@@ -965,7 +994,7 @@ export function Game() {
                                         <div className="scale-100 pointer-events-none origin-center p-1">
                                             <LobbyParrotPreview type={bird.id} />
                                         </div>
-                                        <span className="text-sm font-black uppercase text-center">{bird.name}</span>
+                                        <span className="text-sm font-black uppercase text-center text-black">{bird.name}</span>
                                     </button>
                                 ))}
                             </div>
@@ -1074,6 +1103,8 @@ export function Game() {
                                         <div className="absolute inset-x-0 bottom-0 bg-black/75 text-[10px] uppercase font-black text-white tracking-widest py-1 select-none z-10">SWAP BIRD</div>
                                     </button>
                                     
+                                    <span className="text-sm font-black text-black uppercase mb-2 select-none">BIRD: {character === 'Кеша' ? 'KESHA' : 'LUSHA'}</span>
+                                    
                                     {/* Editable Nickname Input in real-time */}
                                     <input
                                         type="text"
@@ -1105,6 +1136,7 @@ export function Game() {
                                             </div>
                                             <div className="absolute inset-0 bg-black/5"></div>
                                         </div>
+                                        <span className="text-sm font-black text-black uppercase mb-1">{p.character === 'Кеша' ? 'KESHA' : 'LUSHA'}</span>
                                         <span className="text-xl font-black uppercase text-black text-center truncate w-full px-2" title={p.username}>{p.username}</span>
                                     </div>
                                 ))}
